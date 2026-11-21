@@ -71,6 +71,14 @@ export interface RoundStats {
   avgReactionMs: number | null;
   leftRightRatio: number | null;
   bestCombo: number;
+  /** Share of the round with both gloves up, 0..100 (from the motion lib's guardUptime). */
+  guardPct?: number | null;
+  /** DODGE events that were slips (anything not tagged metrics.kind === 'duck'). */
+  slips?: number;
+  /** DODGE events tagged metrics.kind === 'duck'. */
+  ducks?: number;
+  /** Last fatigueTrend from the motion lib: 0.2 = late punches 20% slower than early ones. */
+  fatigueTrend?: number | null;
 }
 
 export interface SessionEndRequest {
@@ -110,4 +118,45 @@ export interface SessionEndResponse {
   form_score?: number | null;
   /** Set by the client, not the backend: where the data came from. */
   source?: 'live' | 'mock';
+}
+
+// ---- v2 additions: players, session start, leaderboard ----
+
+export interface Player {
+  player_id: string;
+  display_name: string;
+  created_at?: string;
+}
+
+/** POST /api/players {display_name} -> Player */
+export interface CreatePlayerRequest {
+  display_name: string;
+}
+
+/** POST /api/session/start -> StartSessionResponse */
+export interface StartSessionRequest {
+  player_id: string;
+  display_name: string;
+  sport: Sport;
+}
+export interface StartSessionResponse {
+  session_id: string;
+  started_at: string;
+}
+
+/** GET /api/leaderboard?sport=BOXING&limit=10 -> LeaderboardResponse */
+export interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  /** Set by the client: where the data came from. */
+  source?: 'live' | 'mock';
+}
+
+export type ApiSource = 'live' | 'mock';
+
+/** getApiStatus(): what the client is doing right now. */
+export interface ApiStatus {
+  /** live = API configured and last call worked; offline = API configured but failing / no network; mock = no API. */
+  mode: 'live' | 'mock' | 'offline';
+  /** Events waiting to be sent (memory + localStorage outbox). */
+  queued: number;
 }

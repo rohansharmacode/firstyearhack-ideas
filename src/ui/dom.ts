@@ -40,3 +40,24 @@ export const fmtTime = (ms: number) => {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
+
+/** Zero-padded mm:ss, e.g. 01:00, 00:09. */
+export const fmtClock = (ms: number) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+
+export const prefersReducedMotion = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Overlays are `position:absolute; inset:0`, so make sure the container is a containing block. */
+export function ensurePositioned(parent: HTMLElement) {
+  if (parent === document.body || parent === document.documentElement) return;
+  if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+}
+
+/** Is the keyboard event aimed at a text field (so global shortcuts should ignore it)? */
+export function isTyping(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null;
+  return !!t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+}
