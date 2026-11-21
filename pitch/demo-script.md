@@ -2,32 +2,36 @@
 
 Roles: **Speaker** talks. **Driver** runs the laptop. **Boxer** (a judge if they agree, else a teammate) plays.
 
-Setup before judges arrive: game open on the calibration screen, Snowsight tab with the leaderboard query, Streamlit tab, backup video ready, warehouse warmed up (run any query in the last 5 minutes).
+Setup before judges arrive: game open on the Kinetic dashboard, server running (`cd server && npm run dev`), Snowsight tab with the MOTION_EVENTS query, Streamlit tab, trailer video ready, warehouse warmed up (run any query in the last 5 minutes).
 
 | Time | Speaker says | On screen |
 | --- | --- | --- |
-| 0:00 | "Remember swinging a controller to punch a cartoon boxer? In 2026 you do not need the controller. Your webcam is enough." | Title screen |
-| 0:10 | "Want to throw a few punches? Stand here, hold your guard up for two seconds." | Calibration gate, Boxer holds stance |
-| 0:20 | "The browser reads 33 body points with MediaPipe. We turn wrist speed and elbow angle into jabs, hooks, uppercuts, blocks and slips. Nothing leaves the laptop except the stats." | Round starts |
-| 0:25 to 1:05 | Let them box. Light commentary only: "Watch the red ring, that is the drone charging. Block!" / "That hook was 3.1 shoulder-widths per second." | 40 second round |
-| 1:05 | "Every punch you threw is now a row in Snowflake." | Driver switches to Snowsight, runs `SELECT ... FROM MOTION_EVENTS WHERE session_id = ...` |
-| 1:15 | "Snowflake Cortex reads those rows and writes your Coach Card." | Coach Card in game: 3 tips, 1 drill, a badge |
-| 1:30 | "Your score is live on the leaderboard. [IF BUILT] A Dynamic Table keeps a 0 to 100 form score that tracks fatigue across the round." | Leaderboard, then form score |
-| 1:45 | "[IF BUILT] And the coach can see everyone: this Streamlit app runs inside Snowflake." | Streamlit page |
-| 1:50 | "Built in 7 hours with JetBrains Air. Old motion gaming, no hardware, real coaching data. Thank you." | Back to the game |
+| 0:00 | "Remember swinging a controller to punch a cartoon boxer? In 2026 you do not need the controller. Your webcam is enough." | Kinetic dashboard |
+| 0:08 | "Pick a sport with your hand. Hover on Boxing." | Boxer dwells on the Boxing tile, it launches |
+| 0:15 | "Hold your guard up for two seconds. That measures your shoulders, so tall, short, seated or standing all score the same." | Calibration, "Locked in. Fight!" |
+| 0:20 | "The browser reads 33 body points with MediaPipe. We turn them into jab, cross, hook, uppercut, block and slip. No video leaves the laptop." | Round starts vs HEX-7 |
+| 0:25 to 0:55 | Light commentary only: "Watch the red ring, the drone is charging. Block! Now counter." | Boxing round |
+| 0:55 | "Same engine, different sport." Driver goes Home, opens Goalkeeper. | Reflex Keeper, one or two saves |
+| 1:10 | "[IF BUILT] Every punch you threw is now a row in Snowflake." | Snowsight: `SELECT ... FROM MOTION_EVENTS ORDER BY ts DESC` |
+| 1:20 | "Snowflake Cortex reads those numbers and writes a Coach Card: three tips, a drill, a badge." | Coach Card ([IF BUILT] in game, else the one from a seeded session) |
+| 1:35 | "A Dynamic Table keeps each player's form up to date: speed, fatigue from the first to the last quarter, left-right balance, compared against pro benchmarks." | Streamlit charts |
+| 1:45 | "And a coach can ask questions in plain English. That runs on Cortex too, inside Snowflake." | Streamlit Ask the Coach |
+| 1:52 | "Built today with JetBrains Air. Old motion gaming, no hardware, real coaching data. Thank you." | Back to the dashboard |
+
+If the game is not posting live events by 17:30, swap the 1:10 line for: "Here is the data from our test sessions in Snowflake" and show the seeded rows (`scripts`, `npm run seed`).
 
 ## Fallback lines
 
 **Webcam does not start or tracking is bad (lighting, people behind)**
-- "The lab lighting is fighting us, so I will switch to keyboard mode. Same game, same data path." Driver presses `D`, uses Space and mouse. Carry on from 1:05.
-- If the game itself breaks: "Here is a round we recorded at 15:00." Play the backup video, then go straight to the Snowsight step. The data from that round is already in Snowflake.
+- "The lab lighting is fighting us, so I will switch to keyboard mode. Same game." Driver presses `D`. Carry on.
+- If the game itself breaks: play the 20 s trailer (`docs/art/trailer.md`), then go straight to Snowsight.
 
 **Snowflake is slow (cold warehouse) or Cortex takes long**
-- "Cortex is reading 40 punches right now." Keep talking: explain the punch rule (elbow speed over 280 degrees per second, arm over 140 degrees).
-- After 10 seconds: open a Coach Card from an earlier session. "This is the one from my round earlier, same pipeline."
+- "Cortex is reading the round right now." The server shows a fallback Coach Card if Cortex is slow, so keep talking.
+- After 10 seconds: open the Streamlit page instead.
 
 **No internet**
-- "The game runs fully offline. Snowflake is the part that needs the network." Show screenshots of the query and Coach Card from the deck.
+- "The game runs fully in the browser. Snowflake is the part that needs the network." Show the Coach Card and Streamlit screenshots.
 
 **Judge does not want to play**
 - A teammate plays. Speaker: "I will let our worst boxer go first."
