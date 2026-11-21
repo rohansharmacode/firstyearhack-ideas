@@ -16,8 +16,6 @@ Webcam boxing game: MediaPipe reads punches in the browser, every punch becomes 
 > **For the front end:**
 > - Set `VITE_API_URL=http://localhost:3001` in the root `.env`. Port 3001 is our server, not the 8787 used in the contract example.
 > - The adapter can now send DODGE as `event_type: 'slip'` or `'duck'` instead of dropping it.
->
-> **Known issue (not backend):** the root `npm run build` fails because `src/lib/motion/motion.test.ts` imports `vitest`, which isn't in the root `package.json`.
 
 ## 1. Architecture
 
