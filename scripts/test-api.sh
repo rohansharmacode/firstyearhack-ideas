@@ -98,5 +98,41 @@ else
   check "ask has answer" "$(nonempty "$(jget "$BODY" 'd["answer"]')")"
 fi
 
+# --- Front-end contract (src/api/CONTRACT.md): client-generated ids, {events:[...]}, text/plain
+# beacon, section-5 column names, rich /api/session/end. No /api/players or /api/session/start.
+echo "--- front-end contract ---"
+FE_SID=$(python3 -c 'import uuid;print(uuid.uuid4())'); FE_PID=$(python3 -c 'import uuid;print(uuid.uuid4())')
+FE_EVENTS=$(python3 - "$FE_SID" "$FE_PID" "$NOW" <<'PY'
+import json, sys, uuid, datetime as D
+sid, pid, now = sys.argv[1:4]
+t0 = D.datetime.strptime(now, "%Y-%m-%dT%H:%M:%S.000Z")
+types = ["JAB", "CROSS", "HOOK", "UPPERCUT"]
+ev = []
+for i in range(12):
+    kind = "BLOCK" if i % 6 == 5 else "PUNCH"
+    ev.append({"event_id": str(uuid.uuid4()), "session_id": sid, "player_id": pid, "sport": "BOXING",
+               "event_ts": (t0 + D.timedelta(milliseconds=700 * i)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+               "round_ms": 700 * i, "event_type": kind, "peak_velocity": 15 + i, "reaction_ms": 280 + i,
+               "accuracy_score": 70 + i, "symmetry_ratio": None,
+               "metrics": {"punchType": types[i % 4], "hand": "L" if i % 2 else "R", "landed": i % 4 != 3}})
+ev.append({**ev[0], "event_id": str(uuid.uuid4()), "event_type": "DODGE", "metrics": {}})
+print(json.dumps({"events": ev}))
+PY
+)
+req POST /api/events "$FE_EVENTS"
+check "FE POST /api/events {events:[...]} 2xx" "$([[ "$CODE" =~ ^20[024]$ ]] && echo 1 || echo 0)"
+check "FE events accepted=12 ignored=1" "$([ "$(jget "$BODY" '"%s/%s" % (d["accepted"], d["ignored"])')" = "12/1" ] && echo 1 || echo 0)"
+out=$(curl -s -m 30 -w $'\n%{http_code}' -X POST -H 'Content-Type: text/plain;charset=UTF-8' -d "$FE_EVENTS" "$BASE_URL/api/events")
+CODE="${out##*$'\n'}"; BODY="${out%$'\n'*}"
+check "FE text/plain beacon resend is deduped" "$([ "$(jget "$BODY" 'd["duplicates"]')" = "12" ] && echo 1 || echo 0)"
+req POST /api/session/end "{\"session_id\":\"$FE_SID\",\"player_id\":\"$FE_PID\",\"display_name\":\"Smoke FE\",\"sport\":\"BOXING\",\"started_at\":\"$NOW\",\"ended_at\":\"$NOW\",\"final_score\":900,\"result\":\"WIN\",\"avg_inference_fps\":29.5,\"stats\":{\"punches\":10}}"
+check "FE POST /api/session/end 200" "$(code_is 200)"
+check "FE coach headline + 3 tips" "$([ "$(jget "$BODY" '1 if d["coach"]["headline"] and len(d["coach"]["tips"])==3 else 0')" = "1" ] && echo 1 || echo 0)"
+check "FE coach drill/badge are {name,description}" "$([ "$(jget "$BODY" '1 if all(d["coach"][k]["name"] and d["coach"][k]["description"] for k in ("drill","badge")) else 0')" = "1" ] && echo 1 || echo 0)"
+check "FE leaderboard rows have display_name/sport/score" "$([ "$(jget "$BODY" '1 if isinstance(d["leaderboard"],list) and all(k in r for r in d["leaderboard"] for k in ("rank","player_id","display_name","sport","score")) else 0')" = "1" ] && echo 1 || echo 0)"
+check "FE form_score present" "$([ "$(jget "$BODY" '1 if "form_score" in d else 0')" = "1" ] && echo 1 || echo 0)"
+req GET "/api/player/$FE_PID/stats"
+check "FE player created with display_name" "$([ "$(jget "$BODY" 'd["player"]["name"]')" = "Smoke FE" ] && echo 1 || echo 0)"
+
 echo
 if [ "$FAILS" -eq 0 ]; then echo "ALL CHECKS PASSED"; else echo "$FAILS CHECK(S) FAILED"; exit 1; fi
