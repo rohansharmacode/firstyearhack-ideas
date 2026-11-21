@@ -1,5 +1,13 @@
 # Frontend ↔ backend contract (for Person B)
 
+> **Update:** the Express server in `server/` uses its own shapes: `{name}` for players, a bare event array with lowercase `jab|cross|hook|uppercut|block`, `sport: "boxing"`, and `{session_id}` for session/end. The client talks to it through `src/api/serverAdapter.ts`, which maps these shapes, so the server is the source of truth. The shapes below are the client's internal ones.
+>
+> **Open asks for the server:**
+> 1. Accept `slip`/`duck` event types. The client drops them for now.
+> 2. Parse `text/plain` bodies on `/api/events`. `sendBeacon` on tab close sends `text/plain`, and `express.json()` ignores it.
+> 3. Keep `payload.client_event_id` to de-dupe retried events. The server makes a new `event_id` for each event, so a retried batch creates duplicates.
+
+
 Types live in `src/api/types.ts`; the client is `src/api/client.ts`. Field names match the Snowflake tables in `motion-sports-research.md` (section 5), so you can insert rows as-is.
 
 The frontend reads `VITE_API_URL` (for example `http://localhost:8787`, trailing slash optional). If it is empty, or `VITE_USE_MOCK=true`, the frontend uses mock data and never calls the network. If a live call fails (network error, non-2xx, or timeout: 8 s, 20 s for `/api/session/end`), the frontend falls back to mock data and shows an "offline" chip, so the demo never breaks.

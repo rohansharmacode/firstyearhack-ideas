@@ -16,10 +16,10 @@
 // mock data (source: 'mock'). Mock mode = VITE_API_URL empty or VITE_USE_MOCK === 'true'.
 
 import { mockLeaderboard, mockPlayer, mockSessionEnd, recordMockScore } from './mock';
+import { parseCoach, parseLeaderboard, serverSport, toServerEvent } from './serverAdapter';
 import type { MotionEvent as LibMotionEvent } from '../lib/motion';
 import type {
   ApiStatus,
-  LeaderboardEntry,
   LeaderboardResponse,
   MotionEvent,
   MotionEventDetail,
@@ -185,13 +185,21 @@ function enqueue(ev: MotionEvent) {
 async function sendOnce(): Promise<'done' | 'more' | 'failed'> {
   if (!outbox.length) return 'done';
   const batch = outbox.splice(0, BATCH_MAX);
+  const payload = batch.map(toServerEvent).filter((e) => e !== null);
   try {
-    await request('POST', '/api/events', { events: batch });
+    if (payload.length) await request('POST', '/api/events', payload);
     backoffMs = 0;
     nextAttemptAt = 0;
     persistOutbox();
     return outbox.length ? 'more' : 'done';
   } catch (err) {
+    // A 4xx (other than timeout/rate limit) will never succeed: drop the batch instead of
+    // retrying it forever and blocking everything behind it.
+    if (err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+      console.error(`[api] server rejected ${batch.length} events (HTTP ${err.status}); dropping them`, err);
+      persistOutbox();
+      return outbox.length ? 'more' : 'done';
+    }
     outbox = batch.concat(outbox); // back to the front of the queue
     capOutbox();
     backoffMs = backoffMs ? Math.min(backoffMs * 2, BACKOFF_MAX_MS) : BACKOFF_START_MS;
@@ -242,10 +250,10 @@ function beaconOutbox() {
   while (i < outbox.length) {
     // Grow the chunk until it would exceed the beacon size limit.
     let n = Math.min(BATCH_MAX, outbox.length - i);
-    let body = JSON.stringify({ events: outbox.slice(i, i + n) });
+    let body = JSON.stringify(outbox.slice(i, i + n).map(toServerEvent).filter((e) => e !== null));
     while (body.length > BEACON_MAX_BYTES && n > 1) {
       n = Math.max(1, Math.floor(n / 2));
-      body = JSON.stringify({ events: outbox.slice(i, i + n) });
+      body = JSON.stringify(outbox.slice(i, i + n).map(toServerEvent).filter((e) => e !== null));
     }
     if (!navigator.sendBeacon(url, body)) break;
     i += n;
@@ -507,9 +515,10 @@ export class TelemetrySession {
     }
     try {
       await this.flush(); // events first, so Snowflake can aggregate them
-      const data = await request<unknown>('POST', '/api/session/end', req, END_TIMEOUT_MS);
-      const parsed = parseSessionEnd(data);
-      if (!parsed) throw new Error('session/end: unexpected response shape');
+      if (!serverSport(req.sport)) throw new Error(`session/end: server does not support ${req.sport} yet`);
+      const data = await request<unknown>('POST', '/api/session/end', { session_id: req.session_id }, END_TIMEOUT_MS);
+      const coach = parseCoach(isRecord(data) ? data.coach : null);
+      if (!coach) throw new Error('session/end: unexpected response shape');
       // Mirror the score locally so a later mock fallback still shows this player.
       recordMockScore({
         player_id: req.player_id,
@@ -518,41 +527,14 @@ export class TelemetrySession {
         score: req.final_score,
         max_speed: req.stats.maxSpeed ? round(req.stats.maxSpeed, 1) : null,
       });
-      return { ...parsed, source: 'live' };
+      const board = await getLeaderboard(req.sport, 10);
+      return { coach, leaderboard: board.entries, form_score: null, source: 'live' };
     } catch (err) {
       console.warn('[api] session/end failed, using mock coach', err);
       this.offline = true;
       return mockSessionEnd(req);
     }
   }
-}
-
-function parseEntries(v: unknown): LeaderboardEntry[] | null {
-  if (!Array.isArray(v)) return null;
-  return v.filter(isRecord).map((e, i) => ({
-    rank: typeof e.rank === 'number' ? e.rank : i + 1,
-    player_id: String(e.player_id ?? ''),
-    display_name: String(e.display_name ?? 'Player'),
-    sport: (e.sport as Sport) ?? 'BOXING',
-    score: Number(e.score ?? 0),
-    max_speed: e.max_speed == null ? null : Number(e.max_speed),
-  }));
-}
-
-function parseSessionEnd(v: unknown): Omit<SessionEndResponse, 'source'> | null {
-  if (!isRecord(v) || !isRecord(v.coach)) return null;
-  const c = v.coach;
-  if (!Array.isArray(c.tips) || !isRecord(c.drill) || !isRecord(c.badge)) return null;
-  return {
-    coach: {
-      headline: String(c.headline ?? ''),
-      tips: c.tips.map(String).slice(0, 3),
-      drill: { name: String(c.drill.name ?? ''), description: String(c.drill.description ?? '') },
-      badge: { name: String(c.badge.name ?? ''), description: String(c.badge.description ?? '') },
-    },
-    leaderboard: parseEntries(v.leaderboard) ?? [],
-    form_score: typeof v.form_score === 'number' ? v.form_score : null,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -591,11 +573,11 @@ export async function createPlayer(displayName: string): Promise<Player> {
 
   if (!USE_MOCK) {
     try {
-      const data = await request<unknown>('POST', '/api/players', { display_name: name });
+      const data = await request<unknown>('POST', '/api/players', { name });
       if (isRecord(data) && typeof data.player_id === 'string' && data.player_id) {
         const player: Player = {
           player_id: data.player_id,
-          display_name: typeof data.display_name === 'string' && data.display_name ? data.display_name : name,
+          display_name: name,
           created_at: typeof data.created_at === 'string' ? data.created_at : new Date().toISOString(),
         };
         savePlayerRec({ player, live: true });
@@ -619,13 +601,10 @@ export async function createPlayer(displayName: string): Promise<Player> {
  */
 export async function startSession(player: Player, sport: Sport): Promise<TelemetrySession> {
   const base: SessionOptions = { displayName: player.display_name, sport, playerId: player.player_id };
-  if (USE_MOCK) return new TelemetrySession(base);
+  const apiSport = serverSport(sport);
+  if (USE_MOCK || !apiSport) return new TelemetrySession(base);
   try {
-    const data = await request<StartSessionResponse>('POST', '/api/session/start', {
-      player_id: player.player_id,
-      display_name: player.display_name,
-      sport,
-    });
+    const data = await request<StartSessionResponse>('POST', '/api/session/start', { player_id: player.player_id, sport: apiSport });
     const sessionId = isRecord(data) && typeof data.session_id === 'string' && data.session_id ? data.session_id : undefined;
     return new TelemetrySession({ ...base, sessionId });
   } catch (err) {
@@ -644,11 +623,11 @@ export function endSession(session: TelemetrySession, opts: EndOptions): Promise
 /** GET /api/leaderboard?sport=&limit=. Never rejects. */
 export async function getLeaderboard(sport: Sport, limit = 10): Promise<LeaderboardResponse> {
   const n = Math.max(1, Math.min(100, Math.floor(limit) || 10));
-  if (USE_MOCK) return mockLeaderboard(sport, n);
+  const apiSport = serverSport(sport);
+  if (USE_MOCK || !apiSport) return mockLeaderboard(sport, n);
   try {
-    const data = await request<unknown>('GET', `/api/leaderboard?sport=${encodeURIComponent(sport)}&limit=${n}`);
-    // Accept { entries: [...] } or a bare array.
-    const entries = parseEntries(isRecord(data) ? data.entries : data);
+    const data = await request<unknown>('GET', `/api/leaderboard?sport=${apiSport}&limit=${n}`);
+    const entries = parseLeaderboard(data, sport);
     if (!entries) throw new Error('leaderboard: unexpected response shape');
     return { entries: entries.slice(0, n), source: 'live' };
   } catch (err) {
