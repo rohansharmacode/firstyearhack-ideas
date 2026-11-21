@@ -7,9 +7,13 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:all": "concurrently -k -n client,server -c cyan,magenta \"npm run dev\" \"npm --prefix server run dev\"",
+    "test": "npx --yes vitest@4 run src/lib --no-cache && npm --prefix server test",
+    "check": "npm run build && npm run test"
   },
   "devDependencies": {
+    "concurrently": "^10.0.7",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"
   },

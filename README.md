@@ -1,33 +1,54 @@
-# FirstYearHack KCL 2026: Team Ideas
+# Kinetic Ring
 
-## The goal
+A 2000s motion-boxing game rebuilt for 2026: no controller, just your webcam.
+Every punch is logged to Snowflake, and Snowflake Cortex writes you a personal coach card after each round.
 
-- **Theme:** take something old (a game, gadget, website or trend) and rebuild it for 2026.
-- **Prize target:** Best Use of Snowflake. Snowflake must do real work in the demo, not sit at the edge.
-- **Mandatory:** JetBrains Air. We use WebStorm with the Air plugin. Each idea must say what we use Air for.
+![Kinetic Ring gameplay screenshot](docs/screenshot.png)
+<!-- TODO: add docs/screenshot.png (HUD mid-round) before submission -->
 
-## How to add an idea
+## Quick start
 
-1. Copy `ideas/_TEMPLATE.md` to `ideas/<short-name>.md` (for example `ideas/sql-escape-room.md`).
-2. Fill in every section. Keep it short: one screen is enough.
-3. Commit and push to `main`:
-   ```
-   git add ideas/<short-name>.md
-   git commit -m "Add idea: <short-name>"
-   git push
-   ```
-4. Add the idea to the list below.
+```bash
+npm install
+npm run dev            # client only, mock data (no backend needed)
+# open http://localhost:5173
+```
 
-## Ideas
+Full stack (client + API server):
 
-| Idea | Status |
+```bash
+npm install && npm --prefix server install
+cp .env.example .env                  # set VITE_API_URL=http://localhost:3001
+cp server/.env.example server/.env    # SNOWFLAKE_MOCK=1 runs without Snowflake
+npm run dev:all
+```
+
+Snowflake setup (schema, dynamic table, Streamlit): see [README-snowflake.md](README-snowflake.md).
+
+## Controls
+
+| Input | Action |
 | --- | --- |
-| [Motion boxing](ideas/motion-boxing.md) ([research](motion-sports-research.md)) | Front-runner |
-| [AI flatshare bill splitter](ideas/flatshare-bill-splitter.md) | Runner-up |
-| [Receipt spending insights](ideas/receipt-insights.md) | Runner-up |
-| [SQL escape room](ideas/sql-escape-room.md) | Runner-up |
+| Webcam | Stand ~1.5 m back, raise your guard for 2 s to calibrate, then box: jab, cross, hook, uppercut, guard, slip, duck |
+| `D` | Keyboard fallback: `J` jab · `K` cross · `H` hook · `U` uppercut · `Space` block · `←` `→` slip |
+| `M` | Demo mode (scripted round with mock data, for judging if the venue lighting fails) |
+| `R` / `Esc` | Post-match: rematch / home |
 
-## Rules for ideas
+UI components demo (every screen with mock data): http://localhost:5173/src/ui/demo.html
 
-- Original art, names and characters only. No IP from existing games or brands.
-- Pick ideas we can demo live in 3 minutes.
+## Team
+
+| Who | Owns |
+| --- | --- |
+| Naman | Browser client: UI, API client, motion classification, pose pipeline |
+| Sankar | Express API server, Snowflake schema and analytics, Cortex coach, Streamlit dashboard |
+| Rohan | Repo, ideas, pitch and demo script |
+
+## Tech stack
+
+- **Client:** TypeScript, Vite, MediaPipe Pose Landmarker (Lite, in a Web Worker), 1€ filter, framework-free DOM UI
+- **Server:** Node, Express 5, zod, `snowflake-sdk` (in-memory mock mode for offline demos)
+- **Data and AI:** Snowflake tables + Dynamic Table, Snowflake Cortex `COMPLETE` (coach card, "Ask the Coach"), Streamlit in Snowflake
+- **Built with:** JetBrains Air (see [docs/AIR_USAGE.md](docs/AIR_USAGE.md)) in WebStorm
+
+More: [architecture](docs/ARCHITECTURE.md) · [research](motion-sports-research.md) · [original idea list](ideas/)
