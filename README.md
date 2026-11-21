@@ -22,7 +22,7 @@
 
 | Idea | Status |
 | --- | --- |
-| [Motion boxing](ideas/motion-boxing.md) | Front-runner |
+| [Motion boxing](ideas/motion-boxing.md) ([research](motion-sports-research.md)) | Front-runner |
 | [AI flatshare bill splitter](ideas/flatshare-bill-splitter.md) | Runner-up |
 | [Receipt spending insights](ideas/receipt-insights.md) | Runner-up |
 | [SQL escape room](ideas/sql-escape-room.md) | Runner-up |
