@@ -11,8 +11,44 @@ import { computePercentiles } from './percentile';
 import type { Repo } from './repo/types';
 import { CreatePlayerBody, EndSessionBody, EventBatch, IdSchema, StartSessionBody } from './schemas';
 import { BenchmarkCache, SessionService } from './sessionService';
-import type { MotionEvent } from './types';
-import { raceTimeout } from './util';
+import {
+  FrontendEndBody,
+  FrontendEvent,
+  cleanDisplayName,
+  isFrontendEndBody,
+  isFrontendEvent,
+  mapFrontendEvent,
+  toFrontendCoach,
+  toLeaderboardRow,
+} from './frontend';
+import { SPORT, type MotionEvent } from './types';
+import { errorMessage, mean, raceTimeout } from './util';
+
+/** Insertion-ordered set that forgets its oldest entries beyond `cap`. */
+class RecentIds {
+  private ids = new Set<string>();
+  constructor(private readonly cap: number) {}
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+  add(id: string): void {
+    this.ids.add(id);
+    if (this.ids.size > this.cap) {
+      const oldest = this.ids.values().next().value;
+      if (oldest !== undefined) this.ids.delete(oldest);
+    }
+  }
+}
+
+/** navigator.sendBeacon posts JSON as text/plain; accept both. */
+function readBody(body: unknown): unknown {
+  if (typeof body !== 'string') return body;
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new HttpError(400, 'validation_error', 'Body is not valid JSON');
+  }
+}
 
 export interface AppDeps {
   repo: Repo;
@@ -34,6 +70,7 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
   app.set('trust proxy', false);
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: '1mb' }));
+  app.use(express.text({ type: 'text/plain', limit: '1mb' }));
 
   const queue = new EventQueue(repo, config.events, log);
   const benchmarks = new BenchmarkCache(repo, log);
@@ -46,6 +83,38 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
     coachTimeoutMs: config.coachTimeoutMs,
     flushWaitMs: config.sessionEndFlushWaitMs,
   });
+
+  // --- Front-end flow (client-generated ids, see src/frontend.ts) ----------------------------
+  const seenEventIds = new RecentIds(200_000); // client retries resend the same event_id
+  const ensuredSessions = new RecentIds(50_000);
+  const ensuring = new Map<string, Promise<void>>();
+
+  /** Creates the PLAYERS/SESSIONS rows for client-generated ids, in the background. */
+  function ensureRowsInBackground(events: MotionEvent[]): void {
+    const firstBySession = new Map<string, MotionEvent>();
+    for (const e of events) {
+      const cur = firstBySession.get(e.session_id);
+      if (!cur || e.event_ts < cur.event_ts) firstBySession.set(e.session_id, e);
+    }
+    for (const [sid, e] of firstBySession) {
+      if (ensuredSessions.has(sid) || ensuring.has(sid)) continue;
+      const p = (async () => {
+        await repo.ensurePlayer(e.player_id, null);
+        await repo.ensureSession(sid, e.player_id, SPORT, e.event_ts);
+        ensuredSessions.add(sid);
+      })()
+        .catch((err) => log.warn('could not create player/session rows (retried at session end)', { sid, error: errorMessage(err) }))
+        .finally(() => ensuring.delete(sid));
+      ensuring.set(sid, p);
+    }
+  }
+
+  async function playerFormScore(playerId: string): Promise<number | null> {
+    const [metrics, bms] = await Promise.all([repo.playerMetrics(playerId), benchmarks.get('boxing')]);
+    const values = Object.values(computePercentiles(metrics, bms)).filter((v): v is number => typeof v === 'number');
+    const m = mean(values);
+    return m === null ? null : Math.round(m);
+  }
 
   // Snowflake ping is cached briefly so health checks don't hammer the warehouse.
   let lastPing: { at: number; ok: boolean } | null = null;
@@ -77,12 +146,58 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
   });
 
   app.post('/api/events', async (req, res) => {
-    const body: unknown = req.body;
+    let body = readBody(req.body);
+    if (body && typeof body === 'object' && !Array.isArray(body) && Array.isArray((body as { events?: unknown }).events)) {
+      body = (body as { events: unknown[] }).events;
+    }
     if (!Array.isArray(body)) {
-      throw new HttpError(400, 'validation_error', 'Body must be a JSON array of events');
+      throw new HttpError(400, 'validation_error', 'Body must be a JSON array of events or {"events": [...]}');
     }
     if (body.length > config.events.maxBatch) {
       throw new HttpError(413, 'batch_too_large', `At most ${config.events.maxBatch} events per request (got ${body.length})`);
+    }
+    if (body.some(isFrontendEvent)) {
+      // Front-end shape. Bad events are dropped one by one (never 4xx the whole batch: the
+      // client would retry it forever); duplicates of already-accepted event_ids are skipped.
+      const rows: MotionEvent[] = [];
+      let rejected = 0;
+      let ignored = 0;
+      let duplicates = 0;
+      let firstError: unknown;
+      for (const raw of body) {
+        const p = FrontendEvent.safeParse(raw);
+        if (!p.success) {
+          rejected++;
+          firstError ??= zodDetails(p.error);
+          continue;
+        }
+        if (seenEventIds.has(p.data.event_id)) {
+          duplicates++;
+          continue;
+        }
+        const row = mapFrontendEvent(p.data, config.shoulderWidthM);
+        if (row) rows.push(row);
+        else ignored++;
+      }
+      if (rejected > 0) log.warn('dropped invalid front-end events', { rejected, firstError });
+      if (rows.length === 0) {
+        res.status(202).json({ accepted: 0, queued: false, ignored, rejected, duplicates });
+        return;
+      }
+      let written: Promise<unknown>;
+      try {
+        written = queue.enqueue(rows);
+      } catch (err) {
+        if (err instanceof QueueFullError) {
+          throw new HttpError(503, 'queue_full', 'Event buffer is full (database unavailable); retry later');
+        }
+        throw err;
+      }
+      for (const r of rows) seenEventIds.add(r.event_id);
+      ensureRowsInBackground(rows);
+      const outcome = await raceTimeout(written, config.events.ackWaitMs, 'pending' as const);
+      res.status(202).json({ accepted: rows.length, queued: outcome !== 'written', ignored, rejected, duplicates });
+      return;
     }
     const parsed = EventBatch.safeParse(body);
     if (!parsed.success) {
@@ -123,12 +238,42 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
   });
 
   app.post('/api/session/end', async (req, res) => {
-    const { session_id } = EndSessionBody.parse(req.body);
-    res.json(await sessions.end(session_id));
+    const body = readBody(req.body);
+    if (!isFrontendEndBody(body)) {
+      const { session_id } = EndSessionBody.parse(body);
+      res.json(await sessions.end(session_id));
+      return;
+    }
+    // Front-end shape: upsert PLAYERS + SESSIONS, run the coach, return coach + leaderboard + form score.
+    const b = FrontendEndBody.parse(body);
+    await ensuring.get(b.session_id);
+    await db(repo.ensurePlayer(b.player_id, cleanDisplayName(b.display_name)));
+    if (!ensuredSessions.has(b.session_id)) {
+      await db(repo.ensureSession(b.session_id, b.player_id, SPORT, b.started_at ?? null));
+      ensuredSessions.add(b.session_id);
+    }
+    const result = await sessions.end(b.session_id, {
+      final_score: b.final_score ?? null,
+      result: b.result ?? null,
+      avg_inference_fps: b.avg_inference_fps ?? null,
+      ended_at: b.ended_at ?? null,
+      stats: b.stats ?? null,
+    });
+    const [leaderboard, form_score] = await Promise.all([
+      repo.leaderboard(10).then((rows) => rows.map(toLeaderboardRow)).catch((err) => {
+        log.warn('session end: leaderboard unavailable', { error: errorMessage(err) });
+        return [];
+      }),
+      playerFormScore(b.player_id).catch((err) => {
+        log.warn('session end: form score unavailable', { error: errorMessage(err) });
+        return null;
+      }),
+    ]);
+    res.json({ ...result, coach: toFrontendCoach(result.coach, result.stats), leaderboard, form_score });
   });
 
   app.get('/api/leaderboard', async (_req, res) => {
-    res.json(await db(repo.leaderboard(10)));
+    res.json((await db(repo.leaderboard(10))).map(toLeaderboardRow));
   });
 
   app.get('/api/player/:id/stats', async (req, res) => {

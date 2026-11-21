@@ -239,6 +239,10 @@ describe('GET /api/leaderboard', () => {
       score: 120,
       fastest_punch: 6.1,
       best_reaction_ms: 250,
+      // aliases for the front end (src/api/types.ts LeaderboardEntry)
+      display_name: 'P11',
+      sport: 'BOXING',
+      max_speed: 6.1,
     });
     const scores = res.body.map((r: { score: number }) => r.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));

@@ -43,6 +43,8 @@ export interface AppConfig {
   coachTimeoutMs: number;
   /** POST /api/session/end waits this long for that session's queued events to land. */
   sessionEndFlushWaitMs: number;
+  /** Converts the front end's peak_velocity (shoulder-widths/s) to m/s. */
+  shoulderWidthM: number;
   events: EventQueueConfig;
   ask: { rowLimit: number; cortexTimeoutMs: number; queryTimeoutMs: number };
   /** Undefined in mock mode. */
@@ -85,6 +87,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     cortexModel: str(env, 'CORTEX_MODEL', 'mistral-large2'),
     coachTimeoutMs: int(env, 'COACH_TIMEOUT_MS', 8000, 100, 120_000),
     sessionEndFlushWaitMs: int(env, 'SESSION_END_FLUSH_WAIT_MS', 5000, 0, 60_000),
+    shoulderWidthM: Number(str(env, 'SHOULDER_WIDTH_M', '0.4')) > 0 ? Number(str(env, 'SHOULDER_WIDTH_M', '0.4')) : 0.4,
     events: {
       maxBatch: int(env, 'EVENTS_MAX_BATCH', 500, 1, 5000),
       chunkSize: int(env, 'EVENTS_INSERT_CHUNK', 500, 1, 5000),

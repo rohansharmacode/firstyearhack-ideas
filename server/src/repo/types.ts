@@ -25,6 +25,15 @@ export interface Repo {
   getPlayer(playerId: string): Promise<Player | null>;
 
   createSession(playerId: string, sport: string): Promise<string>;
+
+  /**
+   * Front-end flow (client-generated ids): create the player if missing; when `name` is given,
+   * also update the stored name. Never creates duplicates for an existing player_id.
+   */
+  ensurePlayer(playerId: string, name: string | null): Promise<void>;
+
+  /** Front-end flow: create the session row if missing (no-op when it already exists). */
+  ensureSession(sessionId: string, playerId: string, sport: string, startedAt: string | null): Promise<void>;
   getSession(sessionId: string): Promise<SessionRecord | null>;
 
   /**

@@ -24,7 +24,7 @@ export function fallbackCard(stats?: SessionStats | null): CoachCard {
   parts.push('Here is a classic plan to sharpen your speed and guard.');
   return {
     tips: [...FALLBACK_TIPS],
-    drill: '3 x 1-minute rounds of jab-cross-hook at 80% power, 30 s rest, guard back up after every combo.',
+    drill: 'Guard-Return Combos: 3 x 1-minute rounds of jab-cross-hook at 80% power, 30 s rest, guard back up after every combo.',
     badge: 'Iron Will',
     summary: parts.join(' '),
   };
@@ -54,10 +54,10 @@ export function buildCoachPrompt(agg: SessionAggregate, percentiles: Partial<Per
     '',
     'Reply with ONLY one JSON object. No markdown, no code fences, no text before or after it.',
     'It must have exactly these keys and types:',
-    '{"tips": ["<tip 1>", "<tip 2>", "<tip 3>"], "drill": "<drill>", "badge": "<badge>", "summary": "<summary>"}',
+    '{"tips": ["<tip 1>", "<tip 2>", "<tip 3>"], "drill": "<Drill Name>: <drill>", "badge": "<badge>", "summary": "<summary>"}',
     'Rules:',
     '- "tips": exactly 3 specific, actionable tips (max 25 words each), weakest areas first, each tied to a number above.',
-    '- "drill": one concrete drill with reps or time (max 30 words).',
+    '- "drill": a short drill name (2-4 words), a colon, then one concrete drill with reps or time (max 30 words).',
     '- "badge": a fun 1-3 word title earned this round (max 24 characters, no emoji).',
     '- "summary": one or two encouraging sentences (max 40 words) that mention the score.',
   ].join('\n');

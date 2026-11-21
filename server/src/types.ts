@@ -70,6 +70,8 @@ export interface StoredCoach extends CoachCard {
   fallback: boolean;
   model: string;
   generated_at: string;
+  /** What the front end reported at round end (final_score, result, avg_inference_fps, stats). */
+  client?: Record<string, unknown>;
 }
 
 export interface SessionRecord {

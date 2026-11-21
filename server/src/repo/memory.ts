@@ -73,6 +73,28 @@ export class MemoryRepo implements Repo {
     return session_id;
   }
 
+  async ensurePlayer(playerId: string, name: string | null): Promise<void> {
+    const p = this.players.get(playerId);
+    if (p) {
+      if (name) p.name = name;
+      return;
+    }
+    this.players.set(playerId, { player_id: playerId, name: name || 'Player', created_at: new Date().toISOString() });
+  }
+
+  async ensureSession(sessionId: string, playerId: string, sport: string, startedAt: string | null): Promise<void> {
+    if (this.sessions.has(sessionId)) return;
+    this.sessions.set(sessionId, {
+      session_id: sessionId,
+      player_id: playerId,
+      sport,
+      started_at: startedAt ? new Date(startedAt).toISOString() : new Date().toISOString(),
+      ended_at: null,
+      stats: null,
+      coach: null,
+    });
+  }
+
   async getSession(sessionId: string): Promise<SessionRecord | null> {
     const s = this.sessions.get(sessionId);
     return s ? structuredClone(s) : null;

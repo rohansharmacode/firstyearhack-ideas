@@ -65,15 +65,16 @@ export class SessionService {
 
   constructor(private readonly d: SessionServiceDeps) {}
 
-  end(sessionId: string): Promise<SessionEndResult> {
+  /** `client`: optional front-end round summary, stored inside SESSIONS.ai_coach_json. */
+  end(sessionId: string, client?: Record<string, unknown>): Promise<SessionEndResult> {
     const running = this.inflight.get(sessionId);
     if (running) return running;
-    const p = this.doEnd(sessionId).finally(() => this.inflight.delete(sessionId));
+    const p = this.doEnd(sessionId, client).finally(() => this.inflight.delete(sessionId));
     this.inflight.set(sessionId, p);
     return p;
   }
 
-  private async doEnd(sessionId: string): Promise<SessionEndResult> {
+  private async doEnd(sessionId: string, client?: Record<string, unknown>): Promise<SessionEndResult> {
     const { repo, queue, log } = this.d;
     const session = await db(repo.getSession(sessionId));
     if (!session) throw new HttpError(404, 'session_not_found', `Unknown session_id ${sessionId}`);
@@ -103,6 +104,7 @@ export class SessionService {
       fallback,
       model: fallback ? 'fallback' : this.d.cortex.model,
       generated_at: new Date().toISOString(),
+      ...(client ? { client } : {}),
     };
 
     try {

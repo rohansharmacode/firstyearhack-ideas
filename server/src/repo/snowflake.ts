@@ -33,6 +33,23 @@ export const SQL = {
 
   insertPlayer: `INSERT INTO PLAYERS (player_id, name, created_at) SELECT ?, ?, TO_TIMESTAMP_NTZ(?)`,
 
+  /** Insert-if-missing; a non-NULL name also renames (front end sends display_name at round end). */
+  upsertPlayer: `
+    MERGE INTO PLAYERS t
+    USING (SELECT CAST(? AS VARCHAR) AS player_id, CAST(? AS VARCHAR) AS name, TO_TIMESTAMP_NTZ(?) AS created_at) s
+    ON t.player_id = s.player_id
+    WHEN MATCHED AND s.name IS NOT NULL AND (t.name IS NULL OR t.name <> s.name) THEN UPDATE SET name = s.name
+    WHEN NOT MATCHED THEN INSERT (player_id, name, created_at) VALUES (s.player_id, COALESCE(s.name, 'Player'), s.created_at)`,
+
+  /** Insert-if-missing for client-generated session ids. */
+  ensureSession: `
+    MERGE INTO SESSIONS t
+    USING (SELECT CAST(? AS VARCHAR) AS session_id, CAST(? AS VARCHAR) AS player_id, CAST(? AS VARCHAR) AS sport,
+                  TO_TIMESTAMP_NTZ(?) AS started_at) s
+    ON t.session_id = s.session_id
+    WHEN NOT MATCHED THEN INSERT (session_id, player_id, sport, started_at)
+      VALUES (s.session_id, s.player_id, s.sport, s.started_at)`,
+
   getPlayer: `SELECT player_id, name FROM PLAYERS WHERE player_id = ? LIMIT 1`,
 
   insertSession: `INSERT INTO SESSIONS (session_id, player_id, sport, started_at) SELECT ?, ?, ?, TO_TIMESTAMP_NTZ(?)`,
@@ -316,6 +333,14 @@ export class SnowflakeRepo implements Repo {
     const id = randomUUID();
     await this.db.query(SQL.insertSession, [id, playerId, sport, toNtzString(new Date())]);
     return id;
+  }
+
+  async ensurePlayer(playerId: string, name: string | null): Promise<void> {
+    await this.db.query(SQL.upsertPlayer, [playerId, name, toNtzString(new Date())]);
+  }
+
+  async ensureSession(sessionId: string, playerId: string, sport: string, startedAt: string | null): Promise<void> {
+    await this.db.query(SQL.ensureSession, [sessionId, playerId, sport, toNtzString(startedAt ?? new Date())]);
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {

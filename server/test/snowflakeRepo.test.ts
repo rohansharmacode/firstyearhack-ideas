@@ -78,6 +78,23 @@ describe('SnowflakeRepo uses bind variables', () => {
     expect(countPlaceholders(sql)).toBe(binds.length);
   });
 
+  it('ensurePlayer / ensureSession are insert-if-missing MERGEs with every value bound', async () => {
+    const db = new FakeExecutor();
+    const repo = new SnowflakeRepo(db, silentLogger);
+    await repo.ensurePlayer('p-1', "Naman'); DROP TABLE PLAYERS;--");
+    await repo.ensurePlayer('p-2', null);
+    await repo.ensureSession('s-1', 'p-1', 'boxing', '2026-11-21T14:02:00.000Z');
+    const [named, unnamed, session] = db.calls;
+    expect(named!.sql).toBe(SQL.upsertPlayer);
+    expect(named!.sql).toMatch(/MERGE INTO PLAYERS[\s\S]*WHEN NOT MATCHED THEN INSERT/);
+    expect(named!.binds.slice(0, 2)).toEqual(['p-1', "Naman'); DROP TABLE PLAYERS;--"]);
+    expect(unnamed!.binds[1]).toBeNull();
+    expect(session!.sql).toBe(SQL.ensureSession);
+    expect(session!.sql).not.toMatch(/WHEN MATCHED/);
+    expect(session!.binds).toEqual(['s-1', 'p-1', 'boxing', '2026-11-21 14:02:00.000']);
+    for (const c of db.calls) expect(countPlaceholders(c.sql)).toBe(c.binds.length);
+  });
+
   it('finalizeSession writes ai_coach_json via PARSE_JSON(?) only when not yet set', async () => {
     const db = new FakeExecutor(() => ({ rows: [{ 'number of rows updated': 1 }], numUpdated: 1 }));
     const repo = new SnowflakeRepo(db, silentLogger);
