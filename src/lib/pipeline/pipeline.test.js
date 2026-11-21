@@ -103,6 +103,22 @@ describe('singleton lifecycle using browser fakes',()=>{
     expect(worker.terminate).toHaveBeenCalledTimes(1)
     expect(video.srcObject).toBeNull()
   })
+  it('does not schedule animation after a running-status listener disposes it',async()=>{
+    const {worker,stop}=setup()
+    pipeline.onStatus(status=>{if(status.state==='running') pipeline.dispose()})
+    const start=pipeline.start()
+    await vi.waitFor(()=>expect(worker.onmessage).toBeTypeOf('function'))
+    worker.onmessage({data:{type:'ready',delegate:'CPU'}})
+    await start
+    expect(requestAnimationFrame).not.toHaveBeenCalled()
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(worker.terminate).toHaveBeenCalledTimes(1)
+  })
+  it('allows disposal from a status callback without recursive disposal',()=>{
+    setup()
+    pipeline.onStatus(status=>{if(status.state==='stopped') pipeline.dispose()})
+    expect(()=>pipeline.stop()).not.toThrow()
+  })
   it('stops a camera that arrives after disposal',async()=>{
     const {media,stop}=setup()
     let resolve

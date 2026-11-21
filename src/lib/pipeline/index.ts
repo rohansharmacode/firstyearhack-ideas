@@ -64,7 +64,7 @@ export class PosePipeline {
     if (!this.desired || this.disposed || this.status.state === 'running') return
     this.status.state = 'running'
     this.publish()
-    this.raf = requestAnimationFrame(this.tick)
+    if (this.desired && !this.disposed) this.raf = requestAnimationFrame(this.tick)
   }
   private async initialize() {
     this.status.state = 'starting'
@@ -178,6 +178,7 @@ export class PosePipeline {
     this.publish()
   }
   private release() {
+    cancelAnimationFrame(this.raf)
     this.generation++
     clearTimeout(this.readyTimer)
     clearTimeout(this.frameTimer)
@@ -196,13 +197,13 @@ export class PosePipeline {
   }
   dispose() {
     if (this.disposed) return
-    this.stop()
     this.disposed = true
+    this.desired = false
     this.release()
-    this.status.state = 'disposed'
+    this.status = {...this.status,state:'disposed',person:'no-person',fps:0}
     this.publish()
     this.frames.clear()
     this.statuses.clear()
-    PosePipeline.instance = undefined
+    if (PosePipeline.instance === this) PosePipeline.instance = undefined
   }
 }
