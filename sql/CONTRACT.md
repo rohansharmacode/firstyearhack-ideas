@@ -20,7 +20,8 @@ SESSIONS(session_id STRING PK default UUID_STRING(), player_id STRING, sport STR
 
 MOTION_EVENTS(event_id STRING default UUID_STRING(), session_id STRING, player_id STRING,
   sport STRING, event_ts TIMESTAMP_NTZ,
-  event_type STRING   -- 'jab' | 'cross' | 'hook' | 'uppercut' | 'block'
+  event_type STRING   -- 'jab' | 'cross' | 'hook' | 'uppercut' | 'block' | 'slip' | 'duck'
+                      --   (slip/duck are stored but are NOT punches and NOT in the punch mix)
   hand STRING         -- 'L' | 'R'
   speed_mps FLOAT     -- punch hand speed, metres/second (blocks: 0)
   accuracy FLOAT      -- 0..1 (blocks: NULL)
@@ -53,8 +54,10 @@ clamped to [1,99], extrapolating to 0 / 100 at the ends; flipped (100 - x) if NO
 - GET  /api/health -> {ok:true, mode:'snowflake'|'mock', snowflake:'up'|'down'|'mock', queueDepth:n}
 - POST /api/players {name} -> {player_id}
 - POST /api/session/start {player_id, sport:'boxing'} -> {session_id}
-- POST /api/events  body: array of events {session_id, player_id, sport?, event_ts (ISO), event_type, hand, speed_mps, accuracy?, reaction_ms?, guard_up?, points?}
-    -> 202 {accepted:n, queued:boolean}
+- POST /api/events  body: array of events {session_id, player_id, sport?, event_ts (ISO), event_type, hand, speed_mps, accuracy?, reaction_ms?, guard_up?, points?, payload?}
+    -> 202 {accepted:n, queued:boolean, duplicates?:n}
+    JSON or text/plain (sendBeacon). payload.client_event_id (a UUID) becomes event_id, so a resent event is skipped.
+    payload.speed_unit = 'SW/s' means speed_mps is in shoulder-widths/s; the server converts it with SHOULDER_WIDTH_M and keeps the raw value in payload.speed_sw_s.
 - POST /api/session/end {session_id} -> {session_id, stats:{score,total_punches,avg_speed,max_speed,avg_reaction_ms,best_reaction_ms,accuracy}, coach:{tips:[string,string,string], drill:string, badge:string, summary:string}, fallback:boolean}
 - GET  /api/leaderboard -> [{rank, player_id, name, score, fastest_punch, best_reaction_ms}] (max 10)
 - GET  /api/player/:id/stats -> {player:{player_id,name}, sessions:[{session_id,started_at,score,...}], percentiles:{punch_speed_mps:n,reaction_ms:n,accuracy_pct:n,guard_pct:n,symmetry_pct:n,fatigue_drop_pct:n}}
@@ -66,10 +69,11 @@ Coach card fallback (hardcoded) is used when Cortex errors / times out (8 s) / r
 ## Front-end contract (accepted on the same endpoints)
 - Client-generated ids: the server MERGEs PLAYERS / SESSIONS rows on first sight (no /api/players, /api/session/start needed).
 - POST /api/events accepts {events:[...]} or an array, as JSON or text/plain (sendBeacon). Section-5 events map as follows:
-  - PUNCH + metrics.punchType -> event_type; BLOCK -> 'block'; other types are ignored.
+  - PUNCH + metrics.punchType -> event_type; BLOCK -> 'block'.
+  - DODGE -> 'duck' (metrics.kind 'duck' or metrics.direction 'DOWN') or 'slip'; other types are ignored.
   - peak_velocity * SHOULDER_WIDTH_M -> speed_mps; accuracy_score/100 -> accuracy.
   - metrics.hand -> hand; metrics.guardUp -> guard_up.
-  - metrics.points -> points. Without metrics.points: 10 + 10*accuracy for a landed punch, 0 for a missed punch, 5 for a block.
+  - metrics.points -> points. Without metrics.points: 10 + 10*accuracy for a landed punch, 0 for a missed punch, 5 for a block or dodge.
   - The raw event is kept in payload.
   - Reply: 202 {accepted, queued, ignored, rejected, duplicates}.
 - POST /api/session/end with player_id + display_name (+ final_score, result, avg_inference_fps, stats).

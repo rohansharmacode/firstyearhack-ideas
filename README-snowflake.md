@@ -4,11 +4,18 @@ Webcam boxing game: MediaPipe reads punches in the browser, every punch becomes 
 
 > **Team status (2026-11-21, backend / Person B).** The backend (`/server`, `/sql`, `/streamlit`, `/scripts`) is on `main` and passes all tests in mock mode. It has **not** run against a real Snowflake account yet: that needs credentials in `server/.env`.
 >
-> **Front end, no changes needed:** the server now accepts the front end's own contract (`src/api/CONTRACT.md`) as-is. That covers client-generated ids, `{events:[...]}` batches, `text/plain` `sendBeacon` bodies, and the section-5 column names. `/api/session/end` returns `{coach:{headline,tips,drill:{name,description},badge:{name,description}}, leaderboard, form_score}`. See "Connecting the front end" below.
+> **Front end:** `src/api/serverAdapter.ts` (Naman, 24fc233) talks to the original API, and that works unchanged. The server also accepts the front end's own contract (`src/api/CONTRACT.md`) directly, so either client shape works. See "Connecting the front end" below.
 >
-> **Optional asks for the front end:**
-> 1. Set `VITE_API_URL=http://localhost:3001` in the root `.env`. Port 3001 is our server, not the 8787 used in the contract example.
-> 2. If you want the Snowflake leaderboard score to equal the in-game `final_score`, send `metrics.points` on each event. Otherwise the server scores each event itself (rules below).
+> **Open asks from `src/api/CONTRACT.md`: all three are done.**
+> 1. `slip` / `duck` are accepted event types. They are stored, but not counted as punches.
+> 2. `/api/events` parses `text/plain` bodies (`sendBeacon`).
+> 3. `payload.client_event_id` becomes the `event_id`, so retried or beaconed events are skipped instead of stored twice.
+>
+> Also: events tagged `payload.speed_unit: 'SW/s'` are converted to m/s (× `SHOULDER_WIDTH_M`, default 0.4), so speeds compare correctly with `PRO_BENCHMARKS`.
+>
+> **For the front end:**
+> - Set `VITE_API_URL=http://localhost:3001` in the root `.env`. Port 3001 is our server, not the 8787 used in the contract example.
+> - The adapter can now send DODGE as `event_type: 'slip'` or `'duck'` instead of dropping it.
 >
 > **Known issue (not backend):** the root `npm run build` fails because `src/lib/motion/motion.test.ts` imports `vitest`, which isn't in the root `package.json`.
 
@@ -55,19 +62,20 @@ The server accepts two request shapes on the same endpoints, so neither side has
 | | Front-end contract (`src/api/CONTRACT.md`) | Original backend API (`sql/CONTRACT.md`) |
 |---|---|---|
 | Ids | Client generates player/session/event UUIDs; the server creates the `PLAYERS` / `SESSIONS` rows on first sight (MERGE, insert-if-missing). | `POST /api/players`, then `POST /api/session/start`. |
-| `POST /api/events` | `{"events":[...]}` or a bare array, as `application/json` or `text/plain` (beacon). Invalid events are dropped one by one, so one bad event never blocks the batch; a resent `event_id` is skipped. Reply `202 {accepted, queued, ignored, rejected, duplicates}`. | Bare array; a bad batch gets a `400`. |
+| `POST /api/events` | `{"events":[...]}` or a bare array, as `application/json` or `text/plain` (beacon). Invalid events are dropped one by one, so one bad event never blocks the batch; a resent `event_id` is skipped. Reply `202 {accepted, queued, ignored, rejected, duplicates}`. | Bare array, JSON or `text/plain`; a bad batch gets a `400`. `payload.client_event_id` is used for de-duplication; `payload.speed_unit:'SW/s'` is converted to m/s. |
 | `POST /api/session/end` | Full body (`display_name`, `final_score`, `result`, ...). Upserts the player name, stores the client summary in `SESSIONS.ai_coach_json:client`, and returns `{session_id, stats, coach:{headline, tips, drill:{name,description}, badge:{name,description}, summary}, leaderboard, form_score, fallback}`. | `{session_id}`, returns the string-valued coach card. |
 | `GET /api/leaderboard` | Rows also carry `display_name`, `sport:"BOXING"` and `max_speed`. | `rank, player_id, name, score, fastest_punch, best_reaction_ms` |
 
 How front-end events map to `MOTION_EVENTS` (`server/src/frontend.ts`):
 - `PUNCH`: `event_type` = lower-cased `metrics.punchType` (`jab`/`cross`/`hook`/`uppercut`; missing means `jab`).
 - `BLOCK`: `block`.
-- `DODGE`, `TICK` and the other sports' types are not stored yet. They are counted as `ignored`.
+- `DODGE`: `duck` (if `metrics.kind` is `duck` or `metrics.direction` is `DOWN`), otherwise `slip`. Stored, but not counted as a punch.
+- `TICK` and the other sports' types are not stored yet. They are counted as `ignored`.
 - `hand` = `metrics.hand`.
 - `speed_mps` = `peak_velocity` (shoulder-widths/s) × `SHOULDER_WIDTH_M` (default 0.4 m).
 - `accuracy` = `accuracy_score / 100`.
 - `guard_up` = `metrics.guardUp` (optional).
-- `points` = `metrics.points` if sent; otherwise a landed punch scores 10 + 10 × accuracy, a missed punch (`landed:false`) 0, and a block 5. The Snowflake score is the sum of points.
+- `points` = `metrics.points` if sent; otherwise a landed punch scores 10 + 10 × accuracy, a missed punch (`landed:false`) 0, and a block or dodge 5. The Snowflake score is the sum of points.
 - The original event (`round_ms`, `peak_velocity`, `accuracy_score`, `symmetry_ratio`, `metrics`) is kept in `MOTION_EVENTS.payload`, so nothing is lost.
 - `form_score` = the player's mean percentile vs `PRO_BENCHMARKS` (0 to 100).
 
