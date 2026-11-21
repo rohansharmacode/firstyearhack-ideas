@@ -115,7 +115,7 @@ for i in range(12):
                "round_ms": 700 * i, "event_type": kind, "peak_velocity": 15 + i, "reaction_ms": 280 + i,
                "accuracy_score": 70 + i, "symmetry_ratio": None,
                "metrics": {"punchType": types[i % 4], "hand": "L" if i % 2 else "R", "landed": i % 4 != 3}})
-ev.append({**ev[0], "event_id": str(uuid.uuid4()), "event_type": "DODGE", "metrics": {}})
+ev.append({**ev[0], "event_id": str(uuid.uuid4()), "event_type": "TICK", "metrics": {}})
 print(json.dumps({"events": ev}))
 PY
 )

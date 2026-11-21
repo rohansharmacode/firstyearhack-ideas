@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS MOTION_EVENTS (
   player_id    STRING,
   sport        STRING,
   event_ts     TIMESTAMP_NTZ,
-  event_type   STRING,       -- 'jab' | 'cross' | 'hook' | 'uppercut' | 'block'
+  event_type   STRING,       -- 'jab' | 'cross' | 'hook' | 'uppercut' | 'block' | 'slip' | 'duck' (slip/duck: stored, not punches)
   hand         STRING,       -- 'L' | 'R'
   speed_mps    FLOAT,        -- punch hand speed, m/s (blocks: 0)
   accuracy     FLOAT,        -- 0..1 (blocks: NULL)
