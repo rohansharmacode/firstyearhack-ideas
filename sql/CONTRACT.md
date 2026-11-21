@@ -1,9 +1,9 @@
 # Shared contract (source of truth for server / sql / streamlit / scripts)
 
-> NOTE: `motion-sports-research.md` (section 5) is NOT in the repo, so this schema is
-> derived from `ideas/motion-boxing.md` (punch = type, speed, accuracy, timestamp).
-> If the real doc differs, change THIS file and the DDL in `sql/setup.sql`; everything else
-> keys off the column names below.
+> NOTE: this schema was written before `motion-sports-research.md` (section 5) was in the repo.
+> The front end (`src/api/CONTRACT.md`) uses the section-5 names, and we reconcile the two in the
+> server (`server/src/frontend.ts`) instead of changing the tables. See "Front-end contract" at the
+> bottom of this file and "Connecting the front end" in `README-snowflake.md`.
 
 Database `MOTION_DB`, schema `PUBLIC`, warehouse `MOTION_WH` (X-SMALL, AUTO_SUSPEND=300,
 AUTO_RESUME), role `MOTION_APP_ROLE`. Sport is always `'boxing'` for now.
@@ -62,6 +62,20 @@ clamped to [1,99], extrapolating to 0 / 100 at the ends; flipped (100 - x) if NO
 
 Score = sum(points) for the session.
 Coach card fallback (hardcoded) is used when Cortex errors / times out (8 s) / returns invalid JSON.
+
+## Front-end contract (accepted on the same endpoints)
+- Client-generated ids: the server MERGEs PLAYERS / SESSIONS rows on first sight (no /api/players, /api/session/start needed).
+- POST /api/events accepts {events:[...]} or an array, as JSON or text/plain (sendBeacon). Section-5 events map as follows:
+  - PUNCH + metrics.punchType -> event_type; BLOCK -> 'block'; other types are ignored.
+  - peak_velocity * SHOULDER_WIDTH_M -> speed_mps; accuracy_score/100 -> accuracy.
+  - metrics.hand -> hand; metrics.guardUp -> guard_up.
+  - metrics.points -> points. Without metrics.points: 10 + 10*accuracy for a landed punch, 0 for a missed punch, 5 for a block.
+  - The raw event is kept in payload.
+  - Reply: 202 {accepted, queued, ignored, rejected, duplicates}.
+- POST /api/session/end with player_id + display_name (+ final_score, result, avg_inference_fps, stats).
+  - Upserts the player name and stores the client summary in ai_coach_json:client.
+  - Returns {session_id, stats, coach:{headline, tips[3], drill:{name,description}, badge:{name,description}, summary}, leaderboard:[...rows + display_name, sport, max_speed], form_score, fallback}.
+- GET /api/leaderboard rows also include display_name, sport ('BOXING') and max_speed.
 
 ## Mock mode
 `SNOWFLAKE_MOCK=1`: server uses an in-memory repository and a canned Cortex reply, so every

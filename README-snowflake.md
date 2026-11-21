@@ -2,6 +2,16 @@
 
 Webcam boxing game: MediaPipe reads punches in the browser, every punch becomes a row in Snowflake, and Snowflake does the analytics and the AI coaching. Shared names (tables, endpoints, columns) are defined in `sql/CONTRACT.md`.
 
+> **Team status (2026-11-21, backend / Person B).** The backend (`/server`, `/sql`, `/streamlit`, `/scripts`) is on `main` and passes all tests in mock mode. It has **not** run against a real Snowflake account yet: that needs credentials in `server/.env`.
+>
+> **Front end, no changes needed:** the server now accepts the front end's own contract (`src/api/CONTRACT.md`) as-is. That covers client-generated ids, `{events:[...]}` batches, `text/plain` `sendBeacon` bodies, and the section-5 column names. `/api/session/end` returns `{coach:{headline,tips,drill:{name,description},badge:{name,description}}, leaderboard, form_score}`. See "Connecting the front end" below.
+>
+> **Optional asks for the front end:**
+> 1. Set `VITE_API_URL=http://localhost:3001` in the root `.env`. Port 3001 is our server, not the 8787 used in the contract example.
+> 2. If you want the Snowflake leaderboard score to equal the in-game `final_score`, send `metrics.points` on each event. Otherwise the server scores each event itself (rules below).
+>
+> **Known issue (not backend):** the root `npm run build` fails because `src/lib/motion/motion.test.ts` imports `vitest`, which isn't in the root `package.json`.
+
 ## 1. Architecture
 
 ```mermaid
@@ -36,7 +46,30 @@ Snowflake objects: database `MOTION_DB`, schema `PUBLIC`, warehouse `MOTION_WH`,
 6. Seed demo data: `cd scripts && npm install && npm run seed` (flags: `--seed`, `--players`, `--sessions`, `--dry-run`, `--json out.json`, `--reset`, `--api URL`). It reads the same `SNOWFLAKE_*` env vars as the server.
 7. Smoke test the API: `scripts/test-api.sh`.
 8. Deploy Streamlit: create a Streamlit in Snowflake app from `streamlit/app.py` in Snowsight (Projects > Streamlit), using `MOTION_WH` and a role with access to `MOTION_DB`. Upload `app.py`, `logic.py` and `environment.yml` together (see `streamlit/README.md`).
-9. Start the browser game (front end on http://localhost:5173, the CORS origin the server allows). (The browser game lives outside this repo section; nothing here starts it.)
+9. Start the browser game: in the repo root, set `VITE_API_URL=http://localhost:3001` in `.env`, then `npm install && npm run dev` (http://localhost:5173, the CORS origin the server allows).
+
+## Connecting the front end
+
+The server accepts two request shapes on the same endpoints, so neither side has to change.
+
+| | Front-end contract (`src/api/CONTRACT.md`) | Original backend API (`sql/CONTRACT.md`) |
+|---|---|---|
+| Ids | Client generates player/session/event UUIDs; the server creates the `PLAYERS` / `SESSIONS` rows on first sight (MERGE, insert-if-missing). | `POST /api/players`, then `POST /api/session/start`. |
+| `POST /api/events` | `{"events":[...]}` or a bare array, as `application/json` or `text/plain` (beacon). Invalid events are dropped one by one, so one bad event never blocks the batch; a resent `event_id` is skipped. Reply `202 {accepted, queued, ignored, rejected, duplicates}`. | Bare array; a bad batch gets a `400`. |
+| `POST /api/session/end` | Full body (`display_name`, `final_score`, `result`, ...). Upserts the player name, stores the client summary in `SESSIONS.ai_coach_json:client`, and returns `{session_id, stats, coach:{headline, tips, drill:{name,description}, badge:{name,description}, summary}, leaderboard, form_score, fallback}`. | `{session_id}`, returns the string-valued coach card. |
+| `GET /api/leaderboard` | Rows also carry `display_name`, `sport:"BOXING"` and `max_speed`. | `rank, player_id, name, score, fastest_punch, best_reaction_ms` |
+
+How front-end events map to `MOTION_EVENTS` (`server/src/frontend.ts`):
+- `PUNCH`: `event_type` = lower-cased `metrics.punchType` (`jab`/`cross`/`hook`/`uppercut`; missing means `jab`).
+- `BLOCK`: `block`.
+- `DODGE`, `TICK` and the other sports' types are not stored yet. They are counted as `ignored`.
+- `hand` = `metrics.hand`.
+- `speed_mps` = `peak_velocity` (shoulder-widths/s) × `SHOULDER_WIDTH_M` (default 0.4 m).
+- `accuracy` = `accuracy_score / 100`.
+- `guard_up` = `metrics.guardUp` (optional).
+- `points` = `metrics.points` if sent; otherwise a landed punch scores 10 + 10 × accuracy, a missed punch (`landed:false`) 0, and a block 5. The Snowflake score is the sum of points.
+- The original event (`round_ms`, `peak_velocity`, `accuracy_score`, `symmetry_ratio`, `metrics`) is kept in `MOTION_EVENTS.payload`, so nothing is lost.
+- `form_score` = the player's mean percentile vs `PRO_BENCHMARKS` (0 to 100).
 
 ## 3. Mock mode (no credentials)
 
@@ -47,7 +80,7 @@ cd server && npm install && SNOWFLAKE_MOCK=1 npm run dev
 scripts/test-api.sh
 ```
 
-`scripts/run-mock-e2e.sh` runs the end-to-end flow in mock mode It starts the server with `SNOWFLAKE_MOCK=1`, waits for `/api/health`, seeds 5 players through the API, runs `scripts/test-api.sh`, and stops the server. Mock mode does not exercise Snowflake, Dynamic Tables, or Streamlit.
+`scripts/run-mock-e2e.sh` runs the end-to-end flow in mock mode. It starts the server with `SNOWFLAKE_MOCK=1`, waits for `/api/health`, seeds 5 players through the API, runs `scripts/test-api.sh` (original API plus front-end contract checks), and stops the server. Mock mode does not exercise Snowflake, Dynamic Tables, or Streamlit.
 
 ## 4. 30-second judge pitch
 
