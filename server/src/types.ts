@@ -6,6 +6,10 @@ export type Sport = typeof SPORT;
 export const EVENT_TYPES = ['jab', 'cross', 'hook', 'uppercut', 'block'] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 export const PUNCH_TYPES = ['jab', 'cross', 'hook', 'uppercut'] as const;
+/** Defensive moves: stored in MOTION_EVENTS but not counted as punches or in the punch mix. */
+export const DEFENSE_TYPES = ['slip', 'duck'] as const;
+export const STORED_EVENT_TYPES = [...EVENT_TYPES, ...DEFENSE_TYPES] as const;
+export type StoredEventType = (typeof STORED_EVENT_TYPES)[number];
 
 export type Hand = 'L' | 'R';
 
@@ -17,7 +21,7 @@ export interface MotionEvent {
   sport: string;
   /** ISO-8601 UTC, e.g. 2026-11-21T12:00:00.123Z (stored as TIMESTAMP_NTZ in UTC). */
   event_ts: string;
-  event_type: EventType;
+  event_type: StoredEventType;
   hand: Hand;
   speed_mps: number;
   accuracy: number | null;

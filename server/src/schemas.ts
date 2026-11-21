@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EVENT_TYPES, SPORT } from './types';
+import { SPORT, STORED_EVENT_TYPES } from './types';
 
 /** Ids are UUIDs in practice; allow any short token of safe characters. */
 export const IdSchema = z
@@ -29,7 +29,7 @@ export const EventBody = z.object({
   player_id: IdSchema,
   sport: SportSchema,
   event_ts: z.iso.datetime({ offset: true, message: 'must be an ISO-8601 timestamp with Z or an offset' }),
-  event_type: z.enum(EVENT_TYPES),
+  event_type: z.enum(STORED_EVENT_TYPES),
   hand: z.enum(['L', 'R']),
   speed_mps: z.number().min(0).max(100),
   accuracy: z.number().min(0).max(1).nullish(),

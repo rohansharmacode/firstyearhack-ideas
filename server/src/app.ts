@@ -207,21 +207,38 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
       res.status(202).json({ accepted: 0, queued: false });
       return;
     }
-    const events: MotionEvent[] = parsed.data.map((e) => ({
-      event_id: randomUUID(),
-      session_id: e.session_id,
-      player_id: e.player_id,
-      sport: e.sport,
-      event_ts: new Date(e.event_ts).toISOString(),
-      event_type: e.event_type,
-      hand: e.hand,
-      speed_mps: e.speed_mps,
-      accuracy: e.accuracy ?? null,
-      reaction_ms: e.reaction_ms ?? null,
-      guard_up: e.guard_up ?? null,
-      points: e.points ?? 0,
-      payload: e.payload ?? null,
-    }));
+    let duplicates = 0;
+    const events: MotionEvent[] = [];
+    for (const e of parsed.data) {
+      // payload.client_event_id (src/api/serverAdapter.ts) becomes the event_id, so a batch the
+      // client retries (or re-sends by beacon) is not stored twice.
+      const clientId = IdSchema.safeParse(e.payload?.client_event_id);
+      if (clientId.success && seenEventIds.has(clientId.data)) {
+        duplicates++;
+        continue;
+      }
+      // payload.speed_unit 'SW/s' = shoulder-widths per second; benchmarks are in m/s.
+      const sw = e.payload?.speed_unit === 'SW/s';
+      events.push({
+        event_id: clientId.success ? clientId.data : randomUUID(),
+        session_id: e.session_id,
+        player_id: e.player_id,
+        sport: e.sport,
+        event_ts: new Date(e.event_ts).toISOString(),
+        event_type: e.event_type,
+        hand: e.hand,
+        speed_mps: sw ? Math.round(Math.min(100, e.speed_mps * config.shoulderWidthM) * 1000) / 1000 : e.speed_mps,
+        accuracy: e.accuracy ?? null,
+        reaction_ms: e.reaction_ms ?? null,
+        guard_up: e.guard_up ?? null,
+        points: e.points ?? 0,
+        payload: sw ? { ...e.payload, speed_sw_s: e.speed_mps } : (e.payload ?? null),
+      });
+    }
+    if (events.length === 0) {
+      res.status(202).json({ accepted: 0, queued: false, duplicates });
+      return;
+    }
 
     let written: Promise<unknown>;
     try {
@@ -232,9 +249,10 @@ export function createApp({ repo, cortex, config, log }: AppDeps): AppHandle {
       }
       throw err;
     }
+    for (const e of events) seenEventIds.add(e.event_id);
     // queued:false = already committed when we answered; queued:true = buffered, written in the background.
     const outcome = await raceTimeout(written, config.events.ackWaitMs, 'pending' as const);
-    res.status(202).json({ accepted: events.length, queued: outcome !== 'written' });
+    res.status(202).json({ accepted: events.length, queued: outcome !== 'written', ...(duplicates ? { duplicates } : {}) });
   });
 
   app.post('/api/session/end', async (req, res) => {

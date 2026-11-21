@@ -61,8 +61,10 @@ describe('mapFrontendEvent', () => {
     const block = mapFrontendEvent({ ...base, event_type: 'BLOCK', metrics: {} }, 0.4)!;
     expect(block).toMatchObject({ event_type: 'block', points: 5, accuracy: null });
   });
-  it('ignores event types the boxing analytics do not model', () => {
-    for (const t of ['DODGE', 'TICK', 'SAVE']) expect(mapFrontendEvent({ ...base, event_type: t }, 0.4)).toBeNull();
+  it('maps DODGE to slip/duck and ignores types the boxing analytics do not model', () => {
+    expect(mapFrontendEvent({ ...base, event_type: 'DODGE', metrics: { kind: 'duck' } }, 0.4)).toMatchObject({ event_type: 'duck', points: 5, accuracy: null });
+    expect(mapFrontendEvent({ ...base, event_type: 'DODGE', metrics: { hand: 'R' } }, 0.4)).toMatchObject({ event_type: 'slip', hand: 'R' });
+    for (const t of ['TICK', 'SAVE', 'GOAL']) expect(mapFrontendEvent({ ...base, event_type: t }, 0.4)).toBeNull();
   });
   it('splits "Name: description" drills', () => {
     expect(splitDrill('Guard-Return Jabs: 3 x 1 min')).toEqual({ name: 'Guard-Return Jabs', description: '3 x 1 min' });
@@ -75,7 +77,7 @@ describe('front-end flow', () => {
     const { http, repo } = app();
     const sid = randomUUID();
     const pid = randomUUID();
-    const events = [0, 1, 2, 3].map((i) => fe(sid, pid, i)).concat([fe(sid, pid, 4, { event_type: 'DODGE', metrics: {} })]);
+    const events = [0, 1, 2, 3].map((i) => fe(sid, pid, i)).concat([fe(sid, pid, 4, { event_type: 'TICK', metrics: {} })]);
     const res = await http.post('/api/events').send({ events });
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ accepted: 4, ignored: 1, rejected: 0, duplicates: 0 });
@@ -141,6 +143,36 @@ describe('front-end flow', () => {
     const res = await http.post('/api/session/end').send(endBody(randomUUID(), randomUUID()));
     expect(res.body.fallback).toBe(true);
     expect(res.body.coach.drill.name).toBe('Guard-Return Combos');
+  });
+
+  it("original API: Naman's serverAdapter payloads (client_event_id dedupe, SW/s speed, slip, text/plain bare array)", async () => {
+    const { http, repo } = app();
+    const p = await http.post('/api/players').send({ name: 'Adapter' });
+    const s = await http.post('/api/session/start').send({ player_id: p.body.player_id, sport: 'boxing' });
+    const sid = s.body.session_id;
+    const pid = p.body.player_id;
+    const ev = (i: number, over: Record<string, unknown> = {}) => ({
+      session_id: sid, player_id: pid, sport: 'boxing', event_ts: new Date(Date.UTC(2026, 10, 21, 15, 0, i)).toISOString(),
+      event_type: 'jab', hand: 'R', speed_mps: 20, accuracy: 0.8, reaction_ms: 300, guard_up: null, points: 18,
+      payload: { client_event_id: randomUUID(), round_ms: i * 1000, speed_unit: 'SW/s' }, ...over,
+    });
+    const batch = [ev(0), ev(1), ev(2, { event_type: 'slip', points: 0 })];
+    const first = await http.post('/api/events').send(batch);
+    expect(first.status).toBe(202);
+    expect(first.body.accepted).toBe(3);
+    // the same batch again, as sendBeacon sends it (bare array, text/plain)
+    const beacon = await http.post('/api/events').set('Content-Type', 'text/plain;charset=UTF-8').send(JSON.stringify(batch));
+    expect(beacon.status).toBe(202);
+    expect(beacon.body).toMatchObject({ accepted: 0, duplicates: 3 });
+    await new Promise((r) => setTimeout(r, 30));
+    const rows = repo.events.filter((e) => e.session_id === sid);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]!.event_id).toBe(batch[0]!.payload.client_event_id);
+    expect(rows[0]!.speed_mps).toBe(8); // 20 shoulder-widths/s x 0.4 m
+    expect(rows[0]!.payload).toMatchObject({ speed_sw_s: 20 });
+    const end = await http.post('/api/session/end').send({ session_id: sid });
+    expect(end.body.stats.total_punches).toBe(2); // the slip is stored but is not a punch
+    expect(end.body.stats.max_speed).toBe(8);
   });
 
   it('keeps the original API unchanged (session_id-only end body still returns string drill)', async () => {

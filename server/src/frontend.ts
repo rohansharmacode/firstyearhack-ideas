@@ -68,8 +68,8 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
- * Maps one front-end event to a MOTION_EVENTS row, or null for event types our boxing analytics
- * don't model yet (DODGE, TICK, SAVE, GOAL, ARROW_RELEASE).
+ * Maps one front-end event to a MOTION_EVENTS row (DODGE -> 'slip' or 'duck'), or null for types
+ * our boxing analytics don't model (TICK, SAVE, GOAL, ARROW_RELEASE).
  */
 export function mapFrontendEvent(e: FrontendEventInput, shoulderWidthM: number): MotionEvent | null {
   const m = e.metrics ?? {};
@@ -80,21 +80,24 @@ export function mapFrontendEvent(e: FrontendEventInput, shoulderWidthM: number):
     event_type = (PUNCH_TYPES as readonly string[]).includes(pt) ? (pt as MotionEvent['event_type']) : 'jab';
   } else if (type === 'BLOCK') {
     event_type = 'block';
+  } else if (type === 'DODGE') {
+    event_type = m.kind === 'duck' || m.direction === 'DOWN' ? 'duck' : 'slip';
   } else {
     return null;
   }
   const isBlock = event_type === 'block';
-  const hand = m.hand === 'L' || m.hand === 'R' ? m.hand : isBlock ? 'L' : 'R';
+  const isDefense = isBlock || event_type === 'slip' || event_type === 'duck';
+  const hand = m.hand === 'L' || m.hand === 'R' ? m.hand : isDefense ? 'L' : 'R';
   // peak_velocity is in shoulder-widths/second; PRO_BENCHMARKS and the leaderboard use m/s.
   const speed_mps = e.peak_velocity == null ? 0 : Math.round(clamp(e.peak_velocity * shoulderWidthM, 0, 100) * 1000) / 1000;
-  const accuracy = isBlock || e.accuracy_score == null ? null : clamp(e.accuracy_score / 100, 0, 1);
+  const accuracy = isDefense || e.accuracy_score == null ? null : clamp(e.accuracy_score / 100, 0, 1);
   const guardRaw = m.guardUp ?? m.guard_up;
   const guard_up = typeof guardRaw === 'boolean' ? guardRaw : null;
 
   let points: number;
   if (typeof m.points === 'number' && Number.isFinite(m.points)) {
     points = Math.round(clamp(m.points, -10_000, 10_000));
-  } else if (isBlock) {
+  } else if (isDefense) {
     points = DEFAULT_POINTS.block;
   } else if (m.landed === false) {
     points = 0;
